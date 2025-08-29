@@ -1,0 +1,209 @@
+/*
+ * project_2.c
+ *
+ *  Created on: 12 Sept 2024
+ *      Author: farah
+ */
+#include<avr/io.h>
+#include<avr/interrupt.h>
+#include<util/delay.h>
+
+#define F_CPU 16000000UL
+
+unsigned char tick=0;
+unsigned short num=0;
+unsigned char sec=0,min=0,hour=0,i;
+unsigned char mode=0;
+
+void TIMER1_INIT(void)   //timer 1 initialisation in CTC mode
+{
+	TCCR1A=(1<<FOC1A); //MODE 4
+	TCCR1B=(1<<CS12)|(1<<WGM12); //N=256
+	TCNT1=0;
+	OCR1A=31250;
+	TIMSK|=(1<<OCIE1A);
+}
+
+ISR(TIMER1_COMPA_vect)
+{
+	tick++;
+}
+
+void INT0_Init(void)
+{
+	DDRD  &= (~(1<<PD2)); //int0/pd2
+	PORTD|=(1<<PD2); //INTERNAL PULL UP
+	MCUCR |=  (1<<ISC01);   // Trigger INT0 with the FALLING edge
+	GICR  |= (1<<INT0);  //enable int0
+	SREG  |= (1<<7);  //enable I-bit
+}
+
+void INT1_Init(void)
+{
+	DDRD  &= (~(1<<PD3));
+	MCUCR |= (1<<ISC11);
+	GICR  |= (1<<INT1);
+	SREG  |= (1<<7);
+}
+
+void INT2_Init(void)
+{
+	DDRB &= (~(1<<PB2));
+	PORTB|=(1<<PB2);
+	MCUCSR &=~(1<<ISC2)  ;
+	GICR  |= (1<<INT2);
+	SREG  |= (1<<7);
+}
+
+ISR(INT0_vect) //reset
+{
+	sec=0;
+	min=0;
+	hour=0;
+	tick=0;
+}
+
+ISR(INT1_vect) //pause
+{
+	TCCR1B&=~(1<<CS10)&~(1<<CS11)&~(1<<CS12);
+}
+
+ISR(INT2_vect) //resume
+{
+	TCCR1B=(1<<CS12)|(1<<WGM12);
+}
+
+void display(void)
+{
+	unsigned char num [6]={hour/10,hour%10,min/10,min%10,sec/10,sec%10};
+	for(i=0;i<6;i++)
+	{
+	PORTA=(1<<i);
+	PORTC=num[i];
+	_delay_ms(2);
+
+	}
+}
+
+int main(void)
+{
+	DDRA|=0x3F; 		//first 6 pins in port A output as 7 segments enable
+    PORTA|=0x3F; 		//7 segments Enabled
+	DDRC|=0x0F;  		//first 4 pins output for the decoder
+	PORTC&=0xF0;  		//zero
+	SREG|=(1<<7);  		//enable I-BIT
+	DDRD|=(1<<PD4);		//RED LED
+	PORTD|=(1<<PD4);  	//RED LED initially on
+	DDRD|=(1<<PD5); 	//yellow LED
+	PORTD&=~(1<<PD5);   //yellow LED initially off
+	DDRB&=0x04; 		//PUSH BUTTONS FOR COUNT DOWN MODE (ADJUSTMENT AND TOGGLE BUTTONS)
+	PORTB|=0xFB; 		//INTERNAL PULL UP
+	DDRD|=(1<<PD0);	    //BUZZER
+	PORTD&=~(1<<PD0);   //BUZZER initially off
+
+	INT0_Init();
+	INT1_Init();
+	INT2_Init();
+	TIMER1_INIT();
+
+	while(1)
+	{
+
+		if(!(PINB&(1<<PB7))) //to select count up or count down mode
+		   {
+		     	mode++;
+
+		   } while(!(PINB&(1<<PB7))){display();};
+
+	       if(mode%2==0)  // count up mode
+	       {
+		        PORTD|=(1<<PD4); //red led on
+		        PORTD&=~(1<<PD5);//yellow led off
+	    		if(tick==2)  // 2 interrupts = 1 second
+	    		{
+	    				    sec++;
+	    				    if(sec==60)
+	    			      	{
+	    				     	sec-=60;
+	    				     	min++;
+	    				     }
+	    			     	if(min==60)
+	    			    	{
+	    				    	min-=60;
+	    				    	hour++;
+	    			        }
+	    		            tick=0;
+	    		}
+
+	       }
+	    	else  //count down mode
+	    			{
+
+	    				 PORTD&=~(1<<PD4); //red led off
+	    			     PORTD|=(1<<PD5);  //yellow led on
+	    			     if(tick==2)   // 2 interrupts = 1 second
+	    			     {
+	    			    	 sec--;
+	    			    	 while((sec==0)&&(min==0)&&(hour==0)) //finished
+	    			    	 {
+	    			    		 PORTD|=(1<<PD0); //buzzer on
+	    			    		 display();
+	    			    		 if(!(PINB&(1<<PB7))) //if the system is switched to count up mode
+	    			    		 {
+	    			    			 break;
+	    			    		 }
+	    			    	 }
+	    			    	 if (sec > 0)
+	    			    	 {
+	    			    		 sec--;
+							 }
+	    			    	 else if (min > 0)
+							 {
+								sec = 59;
+								min--;
+						   	 }
+	    			    	 else if (hour > 0)
+							 {
+	    			    		 sec = 59;
+	    			    		 min= 59;
+	    			    		 hour--;
+							 }
+	    			    	 tick=0;
+	    			     }
+	    			}
+
+	       display();
+
+		    if(!(PINB&(1<<PB1)))
+		    {
+		  		    hour++;
+		    }while(!(PINB&(1<<PB1))){display();};;
+
+		  	if(!(PINB&(1<<PB0)))
+		  	{
+		  			hour--;
+		  	}while(!(PINB&(1<<PB0))){display();};;
+
+		  	if(!(PINB&(1<<PB4)))
+		  	{
+		  			min++;
+		  	}while(!(PINB&(1<<PB4))){display();};;
+
+		  	if(!(PINB&(1<<PB3)))
+		  	{
+		  			min--;
+		  	}while(!(PINB&(1<<PB3))){display();};;
+
+		  	if(!(PINB&(1<<PB6)))
+		  	{
+		  		    sec++;
+		  	}while(!(PINB&(1<<PB6))){display();};;
+
+		  	if(!(PINB&(1<<PB5)))
+		  	{
+		  		    sec--;
+		  	}while(!(PINB&(1<<PB5))){display();};;
+
+	} //end of while loop
+
+}
